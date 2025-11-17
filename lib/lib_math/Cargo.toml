@@ -1,0 +1,7 @@
+[package]
+name = "lib_math"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ggmath = { workspace = true, features = ["right", "up"] }

@@ -1,0 +1,31 @@
+[package]
+name = "drill"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lib_app = { path = "lib/lib_app" }
+lib_gpu = { path = "lib/lib_gpu" }
+lib_input = { path = "lib/lib_input" }
+lib_math = { path = "lib/lib_math" }
+lib_renderer = { path = "lib/lib_renderer" }
+lib_window = { path = "lib/lib_window" }
+
+[workspace]
+members = [
+    ".",
+    "lib/lib_app",
+    "lib/lib_gpu",
+    "lib/lib_input",
+    "lib/lib_math",
+    "lib/lib_renderer",
+    "lib/lib_window",
+]
+
+[workspace.dependencies]
+ggmath = "0.13.1"
+pollster = "0.4.0"
+winit = "0.30.12"
+wgpu = "27.0.1"
+gilrs = "0.11.0"
+image = "0.25.9"
