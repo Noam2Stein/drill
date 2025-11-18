@@ -1,24 +1,29 @@
 use std::mem::{offset_of, transmute};
 
 mod quad_buffer;
+use image::EncodableLayout;
+use lib_app::AppContext;
 pub use quad_buffer::*;
 
 use lib_gpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBindingType,
-    BufferDescriptor, BufferInitDescriptor, BufferUsages, ColorTargetState, ColorWrites, Device,
-    DeviceExt, Extent3d, FragmentState, FrontFace, IndexFormat, MultisampleState,
-    PipelineCompilationOptions, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, ShaderStages, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor,
-    TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
-    VertexStepMode, include_wgsl,
+    BufferDescriptor, BufferInitDescriptor, BufferUsages, Color, ColorTargetState, ColorWrites,
+    CommandEncoderDescriptor, Device, DeviceExt, Extent3d, FilterMode, FragmentState, FrontFace,
+    IndexFormat, LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    SamplerBindingType, SamplerDescriptor, ShaderStages, StoreOp, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension,
+    VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode, include_wgsl,
 };
 use lib_math::{
     f32::{FVec2S, FVec4S},
     vec2s,
 };
 
+#[derive(Debug)]
 pub struct Renderer {
     vertex_buf: Buffer,
     index_buf: Buffer,
@@ -36,8 +41,8 @@ pub struct Quad {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sprite {
-    pub min: FVec2S,
-    pub size: FVec2S,
+    pub center: FVec2S,
+    pub extents: FVec2S,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,10 +95,13 @@ impl Renderer {
         });
 
         let image = {
-            let image = image::open("../../../assets/textures/sprites.png")
-                .expect("Failed to open lib_renderer texture");
+            let image = image::open(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/textures/atlas.png"
+            ))
+            .expect("Failed to open lib_renderer texture");
 
-            image.to_rgb8()
+            image.to_rgba8()
         };
 
         let texture = ctx.device.create_texture(&TextureDescriptor {
@@ -111,41 +119,78 @@ impl Renderer {
             view_formats: &[],
         });
 
+        ctx.queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &texture,
+                aspect: TextureAspect::All,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+            },
+            image.as_bytes(),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(image.width() * 4),
+                rows_per_image: Some(image.height()),
+            },
+            texture.size(),
+        );
+
+        let sampler = ctx.device.create_sampler(&SamplerDescriptor {
+            label: Some("lib_renderer sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            anisotropy_clamp: 1,
+            border_color: None,
+            compare: None,
+            lod_max_clamp: 1.0,
+            lod_min_clamp: 1.0,
+            mag_filter: FilterMode::Nearest,
+            min_filter: FilterMode::Nearest,
+            mipmap_filter: FilterMode::Nearest,
+        });
+
+        let shader = ctx
+            .device
+            .create_shader_module(include_wgsl!("shader.wgsl"));
+
+        let bind_group_layout = ctx
+            .device
+            .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("lib_renderer bind group layout"),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                        visibility: ShaderStages::VERTEX,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: false },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
+                        count: None,
+                        visibility: ShaderStages::FRAGMENT,
+                    },
+                ],
+            });
+
         let bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
             label: Some("lib_renderer bind group"),
-            layout: &ctx
-                .device
-                .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                    label: Some("lib_renderer bind group layout"),
-                    entries: &[
-                        BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: ShaderStages::VERTEX,
-                            ty: BindingType::Buffer {
-                                ty: BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: None,
-                            },
-                            count: None,
-                        },
-                        BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: ShaderStages::FRAGMENT,
-                            ty: BindingType::Texture {
-                                sample_type: TextureSampleType::Float { filterable: false },
-                                view_dimension: TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: ShaderStages::FRAGMENT,
-                            ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
-                            count: None,
-                        },
-                    ],
-                }),
+            layout: &bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -157,12 +202,12 @@ impl Renderer {
                         &texture.create_view(&TextureViewDescriptor::default()),
                     ),
                 },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(&sampler),
+                },
             ],
         });
-
-        let shader = ctx
-            .device
-            .create_shader_module(include_wgsl!("shader.wgsl"));
 
         let pipeline = ctx
             .device
@@ -170,14 +215,21 @@ impl Renderer {
                 label: Some("lib_renderer pipeline"),
                 cache: None,
                 depth_stencil: None,
-                layout: None,
+                layout: Some(
+                    &ctx.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: Some("lib_renderer pipeline layout"),
+                            bind_group_layouts: &[&bind_group_layout],
+                            push_constant_ranges: &[],
+                        }),
+                ),
                 multiview: None,
                 primitive: PrimitiveState {
                     front_face: FrontFace::Ccw,
                     conservative: false,
                     cull_mode: None,
                     polygon_mode: PolygonMode::Fill,
-                    strip_index_format: Some(IndexFormat::Uint16),
+                    strip_index_format: None,
                     topology: PrimitiveTopology::TriangleList,
                     unclipped_depth: false,
                 },
@@ -208,6 +260,78 @@ impl Renderer {
             pipeline,
         }
     }
+
+    pub fn render(
+        &self,
+        quads: QuadBufferSlice<'_>,
+        cam: &Camera,
+        output: &TextureView,
+        ctx: RendererContext<'_>,
+    ) {
+        let aspect = output.texture().width() as f32 / output.texture().height() as f32;
+
+        let cam_uniform = CameraUniform {
+            center: cam.center,
+            extents: vec2s!(cam.ortho_size * aspect, cam.ortho_size),
+        };
+
+        let cam_bytes =
+            unsafe { transmute::<&CameraUniform, &[u8; size_of::<CameraUniform>()]>(&cam_uniform) };
+
+        ctx.queue.write_buffer(&self.cam_buf, 0, cam_bytes);
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("lib_renderer render pass"),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            depth_stencil_attachment: None,
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: output,
+                depth_slice: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color {
+                        r: cam.clear_color.x as f64,
+                        g: cam.clear_color.y as f64,
+                        b: cam.clear_color.z as f64,
+                        a: cam.clear_color.w as f64,
+                    }),
+                    store: StoreOp::Store,
+                },
+                resolve_target: None,
+            })],
+        });
+
+        pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+        pass.set_vertex_buffer(
+            1,
+            quads.buf.slice(
+                quads.start * size_of::<Quad>() as u64..quads.end * size_of::<Quad>() as u64,
+            ),
+        );
+        pass.set_index_buffer(self.index_buf.slice(..), IndexFormat::Uint16);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_pipeline(&self.pipeline);
+
+        pass.draw_indexed(0..6, 0, 0..quads.len() as u32);
+
+        drop(pass);
+
+        ctx.queue.submit([encoder.finish()]);
+    }
+}
+
+impl<'a> From<AppContext<'a>> for RendererContext<'a> {
+    fn from(value: AppContext<'a>) -> Self {
+        Self {
+            device: value.device,
+            queue: value.queue,
+            surface_format: value.surface_format,
+        }
+    }
 }
 
 const VERTEX_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
@@ -231,12 +355,12 @@ const INSTANCE_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
         },
         VertexAttribute {
             format: VertexFormat::Float32x2,
-            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, min)) as u64,
+            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, center)) as u64,
             shader_location: 1,
         },
         VertexAttribute {
             format: VertexFormat::Float32x2,
-            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, size)) as u64,
+            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, extents)) as u64,
             shader_location: 2,
         },
         VertexAttribute {

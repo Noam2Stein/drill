@@ -6,4 +6,5 @@ edition = "2024"
 [dependencies]
 lib_gpu = { path = "../lib_gpu" }
 lib_math = { path = "../lib_math" }
+lib_app = { path = "../lib_app" }
 image = { workspace = true }

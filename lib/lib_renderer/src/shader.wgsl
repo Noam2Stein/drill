@@ -24,11 +24,11 @@ struct Camera {
 }
 
 @group(0) @binding(0)
-var(uniform) cam: Camera;
+var<uniform> cam: Camera;
 @group(0) @binding(1)
 var texture: texture_2d<f32>;
 @group(0) @binding(2)
-var sampler: sampler;
+var texture_sampler: sampler;
 
 @vertex
 fn vs_main(input: Vertex) -> Fragment {
@@ -38,8 +38,13 @@ fn vs_main(input: Vertex) -> Fragment {
     let world_pos = input.center + input.vertex_pos * extents;
     let cam_pos = (world_pos - cam.center) / cam.extents;
 
-    output.pos = vec4f(cam_pos, input.layer / 1_000.0, 1.0);
+    output.pos = vec4f(cam_pos, input.layer / 1000.0, 1.0);
     output.uv = input.sprite_center + input.vertex_pos * input.sprite_extents;
     
     return output;
+}
+
+@fragment
+fn fs_main(input: Fragment) -> @location(0) vec4f {
+    return textureSample(texture, texture_sampler, input.uv);
 }
