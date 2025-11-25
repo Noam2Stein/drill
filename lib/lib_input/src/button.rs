@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use lib_math::{NegativeDownExt, NegativeLeftExt, PositiveRightExt, PositiveUpExt, Vec2};
+use lib_math::{NegDownExt, NegLeftExt, RightExt, UpExt, f32::Vec2f};
 use lib_window::{ButtonCode, ButtonEvent, DeviceEvent, KeyCode, PhysicalKey, event::KeyEvent};
 
 use crate::{InputMapped, MapperContext};
@@ -108,29 +108,29 @@ impl InputMapped for Button {
                             | ButtonCode::Unknown => *value >= 0.5,
 
                             ButtonCode::LeftStickRight => {
-                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2::RIGHT) >= MIN_DOT
+                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2f::RIGHT) >= MIN_DOT
                             }
                             ButtonCode::LeftStickLeft => {
-                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2::LEFT) >= MIN_DOT
+                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2f::LEFT) >= MIN_DOT
                             }
                             ButtonCode::LeftStickUp => {
-                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2::UP) >= MIN_DOT
+                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2f::UP) >= MIN_DOT
                             }
                             ButtonCode::LeftStickDown => {
-                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2::DOWN) >= MIN_DOT
+                                *value >= 0.5 && ctx.left_stick_dir.dot(Vec2f::DOWN) >= MIN_DOT
                             }
 
                             ButtonCode::RightStickRight => {
-                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2::RIGHT) >= MIN_DOT
+                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2f::RIGHT) >= MIN_DOT
                             }
                             ButtonCode::RightStickLeft => {
-                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2::LEFT) >= MIN_DOT
+                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2f::LEFT) >= MIN_DOT
                             }
                             ButtonCode::RightStickUp => {
-                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2::UP) >= MIN_DOT
+                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2f::UP) >= MIN_DOT
                             }
                             ButtonCode::RightStickDown => {
-                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2::DOWN) >= MIN_DOT
+                                *value >= 0.5 && ctx.right_stick_dir.dot(Vec2f::DOWN) >= MIN_DOT
                             }
                         };
 

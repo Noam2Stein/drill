@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ggmath = { workspace = true, features = ["right", "up"] }
+ggmath = { workspace = true }

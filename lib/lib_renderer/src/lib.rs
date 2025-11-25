@@ -19,8 +19,8 @@ use lib_gpu::{
     VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode, include_wgsl,
 };
 use lib_math::{
-    f32::{FVec2S, FVec4S},
-    vec2s,
+    f32::{Vec2f, Vec4f},
+    vec2,
 };
 
 #[derive(Debug)]
@@ -34,22 +34,22 @@ pub struct Renderer {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Quad {
-    pub center: FVec2S,
+    pub center: Vec2f,
     pub sprite: Sprite,
     pub layer: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sprite {
-    pub center: FVec2S,
-    pub extents: FVec2S,
+    pub center: Vec2f,
+    pub extents: Vec2f,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
-    pub center: FVec2S,
+    pub center: Vec2f,
     pub ortho_size: f32,
-    pub clear_color: FVec4S,
+    pub clear_color: Vec4f,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,8 +62,8 @@ pub struct RendererContext<'a> {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CameraUniform {
-    center: FVec2S,
-    extents: FVec2S,
+    center: Vec2f,
+    extents: Vec2f,
 }
 
 impl Renderer {
@@ -71,11 +71,11 @@ impl Renderer {
         let vertex_buf = ctx.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("lib_renderer vertex buffer"),
             contents: unsafe {
-                transmute::<&[FVec2S; 4], &[u8; 32]>(&[
-                    vec2s!(-1.0, -1.0),
-                    vec2s!(1.0, -1.0),
-                    vec2s!(1.0, 1.0),
-                    vec2s!(-1.0, 1.0),
+                transmute::<&[Vec2f; 4], &[u8; 32]>(&[
+                    vec2!(-1.0, -1.0),
+                    vec2!(1.0, -1.0),
+                    vec2!(1.0, 1.0),
+                    vec2!(-1.0, 1.0),
                 ])
             },
             usage: BufferUsages::VERTEX,
@@ -272,7 +272,7 @@ impl Renderer {
 
         let cam_uniform = CameraUniform {
             center: cam.center,
-            extents: vec2s!(cam.ortho_size * aspect, cam.ortho_size),
+            extents: vec2!(cam.ortho_size * aspect, cam.ortho_size),
         };
 
         let cam_bytes =
@@ -335,7 +335,7 @@ impl<'a> From<AppContext<'a>> for RendererContext<'a> {
 }
 
 const VERTEX_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
-    array_stride: size_of::<FVec2S>() as u64,
+    array_stride: size_of::<Vec2f>() as u64,
     step_mode: VertexStepMode::Vertex,
     attributes: &[VertexAttribute {
         format: VertexFormat::Float32x2,

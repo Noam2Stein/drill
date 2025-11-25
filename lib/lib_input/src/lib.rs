@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use lib_math::{Vec2, f32::FVec2, vec2};
+use lib_math::{f32::Vec2f, vec2};
 use lib_window::{ButtonCode, ButtonEvent, DeviceEvent};
 
 mod axis;
@@ -39,8 +39,8 @@ pub struct Mapper<T: InputMapped> {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 pub struct MapperContext {
-    pub left_stick_dir: FVec2,
-    pub right_stick_dir: FVec2,
+    pub left_stick_dir: Vec2f,
+    pub right_stick_dir: Vec2f,
 }
 
 impl<T: InputMapped> Mapper<T> {
@@ -83,14 +83,14 @@ impl<T: InputMapped> Mapper<T> {
                     self.left_stick_up - self.left_stick_down,
                 )
                 .try_normalize()
-                .unwrap_or(Vec2::ZERO),
+                .unwrap_or(Vec2f::ZERO),
 
                 right_stick_dir: vec2!(
                     self.right_stick_right - self.right_stick_left,
                     self.right_stick_up - self.right_stick_down,
                 )
                 .try_normalize()
-                .unwrap_or(Vec2::ZERO),
+                .unwrap_or(Vec2f::ZERO),
             },
         );
     }
