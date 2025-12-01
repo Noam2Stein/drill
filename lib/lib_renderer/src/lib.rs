@@ -1,8 +1,11 @@
 use std::mem::{offset_of, transmute};
 
-mod quad_buffer;
 use image::EncodableLayout;
 use lib_app::AppContext;
+
+mod dyn_quad_buffer;
+mod quad_buffer;
+pub use dyn_quad_buffer::*;
 pub use quad_buffer::*;
 
 use lib_gpu::{

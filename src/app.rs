@@ -4,14 +4,14 @@ use lib_app::{AppContext, AppEvent, AppFlow, AppHandler};
 use lib_gpu::TextureView;
 use lib_input::Mapper;
 use lib_math::{f32::Vec2f, vec2, vec4};
-use lib_renderer::{Camera, Quad, QuadBuffer, Renderer, Sprite};
+use lib_renderer::{Camera, DynQuadBuffer, Quad, Renderer, Sprite};
 
 use crate::input::{Input, InputBindings};
 
 #[derive(Debug)]
 pub struct Game {
     renderer: Renderer,
-    quads: QuadBuffer,
+    quads: DynQuadBuffer,
     mapper: Mapper<Input>,
     pos: Vec2f,
 }
@@ -22,38 +22,16 @@ impl AppHandler for Game {
     fn new(ctx: AppContext<'_>) -> Self {
         Self {
             renderer: Renderer::new(ctx.into()),
-            quads: QuadBuffer::new_init(
-                &[Quad {
-                    center: vec2!(0.0),
-                    layer: 0.0,
-                    sprite: Sprite {
-                        center: vec2!(1.0 / 40.0),
-                        extents: vec2!(1.0 / 40.0),
-                    },
-                }],
-                ctx.into(),
-            ),
+            quads: DynQuadBuffer::new(100, ctx.into()),
             mapper: Mapper::new(&InputBindings::default()),
             pos: Vec2f::ZERO,
         }
     }
 
-    fn update(&mut self, delta_time: Duration, ctx: AppContext<'_>) -> AppFlow {
+    fn update(&mut self, delta_time: Duration, _ctx: AppContext<'_>) -> AppFlow {
         let input = self.mapper.map();
 
         self.pos += vec2!(input.x.value(), input.y.value()) * 10.0 * delta_time.as_secs_f32();
-
-        self.quads.index(0).write(
-            &Quad {
-                center: self.pos,
-                sprite: Sprite {
-                    center: vec2!(1.0 / 40.0),
-                    extents: vec2!(1.0 / 40.0),
-                },
-                layer: 0.0,
-            },
-            ctx.into(),
-        );
 
         AppFlow::Continue
     }
@@ -79,6 +57,15 @@ impl AppHandler for Game {
             ctx.into(),
         );
 
-        frame.render(self.quads.slice(..));
+        let mut dyn_buffer_frame = self.quads.start_frame(&mut frame);
+
+        dyn_buffer_frame.push(Quad {
+            center: self.pos,
+            sprite: Sprite {
+                center: vec2!(1.0 / 40.0),
+                extents: vec2!(1.0 / 40.0),
+            },
+            layer: 0.0,
+        });
     }
 }
