@@ -41,11 +41,7 @@ impl AppHandler for Game {
     fn update(&mut self, delta_time: Duration, ctx: AppContext<'_>) -> AppFlow {
         let input = self.mapper.map();
 
-        self.pos += vec2!(input.x.value(), input.y.value())
-            .normalize()
-            .normalize_or(Vec2f::ZERO)
-            * 10.0
-            * delta_time.as_secs_f32();
+        self.pos += vec2!(input.x.value(), input.y.value()) * 10.0 * delta_time.as_secs_f32();
 
         self.quads.index(0).write(
             &Quad {
@@ -73,15 +69,16 @@ impl AppHandler for Game {
     }
 
     fn draw(&mut self, output: &TextureView, ctx: AppContext<'_>) {
-        self.renderer.render(
-            self.quads.slice(..),
+        let mut frame = self.renderer.start_frame(
             &Camera {
                 center: vec2!(0.0),
-                clear_color: vec4!(1.0, 0.0, 0.0, 1.0),
+                clear_color: vec4!(1.0, 0.0, 0.0, 0.0),
                 ortho_size: 8.0,
             },
             output,
             ctx.into(),
         );
+
+        frame.render(self.quads.slice(..));
     }
 }

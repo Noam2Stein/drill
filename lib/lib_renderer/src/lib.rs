@@ -23,13 +23,29 @@ use lib_math::{
     vec2,
 };
 
+const PIXELS_PER_UNIT: f32 = 16.0;
+const ASPECT: f32 = 16.0 / 9.0;
+const MAX_ORTHO_SIZE: f32 = 18.0;
+
 #[derive(Debug)]
 pub struct Renderer {
     vertex_buf: Buffer,
     index_buf: Buffer,
-    cam_buf: Buffer,
-    bind_group: BindGroup,
-    pipeline: RenderPipeline,
+    render_texture_view: TextureView,
+    quad_uniform_buf: Buffer,
+    quad_bind_group: BindGroup,
+    quad_pipeline: RenderPipeline,
+    upscale_uniform_buf: Buffer,
+    upscale_bind_group: BindGroup,
+    upscale_pipeline: RenderPipeline,
+}
+
+#[derive(Debug)]
+pub struct RendererFrame<'a> {
+    renderer: &'a Renderer,
+    output: &'a TextureView,
+    ctx: RendererContext<'a>,
+    ops: Operations<Color>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -61,9 +77,16 @@ pub struct RendererContext<'a> {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct CameraUniform {
-    center: Vec2f,
-    extents: Vec2f,
+struct QuadUniform {
+    cam_center: Vec2f,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct UpscaleUniform {
+    src_extents: Vec2f,
+    src_offset: Vec2f,
+    dst_extents: Vec2f,
 }
 
 impl Renderer {
@@ -87,53 +110,74 @@ impl Renderer {
             usage: BufferUsages::INDEX,
         });
 
-        let cam_buf = ctx.device.create_buffer(&BufferDescriptor {
-            label: Some("lib_renderer camera buffer"),
-            size: size_of::<CameraUniform>() as u64,
+        let render_texture = ctx.device.create_texture(&TextureDescriptor {
+            label: Some("lib_renderer render texture"),
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8Unorm,
+            mip_level_count: 1,
+            sample_count: 1,
+            size: Extent3d {
+                width: (PIXELS_PER_UNIT * MAX_ORTHO_SIZE * 2.0 * ASPECT) as u32,
+                height: (PIXELS_PER_UNIT * MAX_ORTHO_SIZE * 2.0) as u32,
+                depth_or_array_layers: 1,
+            },
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let render_texture_view = render_texture.create_view(&TextureViewDescriptor::default());
+
+        let quad_uniform_buf = ctx.device.create_buffer(&BufferDescriptor {
+            label: Some("lib_renderer quad buffer"),
+            size: size_of::<QuadUniform>() as u64,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let image = {
-            let image = image::open(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/../../assets/textures/atlas.png"
-            ))
-            .expect("Failed to open lib_renderer texture");
+        let sprites = {
+            let image = {
+                let image = image::open(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../assets/textures/sprites.png"
+                ))
+                .expect("Failed to open lib_renderer sprites texture");
 
-            image.to_rgba8()
+                image.to_rgba8()
+            };
+
+            let texture = ctx.device.create_texture(&TextureDescriptor {
+                label: Some("lib_renderer sprites texture"),
+                size: Extent3d {
+                    width: image.width(),
+                    height: image.height(),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb,
+                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            ctx.queue.write_texture(
+                TexelCopyTextureInfo {
+                    texture: &texture,
+                    aspect: TextureAspect::All,
+                    mip_level: 0,
+                    origin: Origin3d::ZERO,
+                },
+                image.as_bytes(),
+                TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(image.width() * 4),
+                    rows_per_image: Some(image.height()),
+                },
+                texture.size(),
+            );
+
+            texture
         };
-
-        let texture = ctx.device.create_texture(&TextureDescriptor {
-            label: Some("lib_renderer texture"),
-            size: Extent3d {
-                width: image.width(),
-                height: image.height(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba8UnormSrgb,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-
-        ctx.queue.write_texture(
-            TexelCopyTextureInfo {
-                texture: &texture,
-                aspect: TextureAspect::All,
-                mip_level: 0,
-                origin: Origin3d::ZERO,
-            },
-            image.as_bytes(),
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(image.width() * 4),
-                rows_per_image: Some(image.height()),
-            },
-            texture.size(),
-        );
 
         let sampler = ctx.device.create_sampler(&SamplerDescriptor {
             label: Some("lib_renderer sampler"),
@@ -150,56 +194,56 @@ impl Renderer {
             mipmap_filter: FilterMode::Nearest,
         });
 
-        let shader = ctx
+        let quad_shader = ctx
             .device
-            .create_shader_module(include_wgsl!("shader.wgsl"));
+            .create_shader_module(include_wgsl!("quad_shader.wgsl"));
 
-        let bind_group_layout = ctx
-            .device
-            .create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("lib_renderer bind group layout"),
-                entries: &[
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        ty: BindingType::Buffer {
-                            ty: BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
+        let quad_bind_group_layout =
+            ctx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("lib_renderer quad bind group layout"),
+                    entries: &[
+                        BindGroupLayoutEntry {
+                            binding: 0,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                            visibility: ShaderStages::VERTEX,
                         },
-                        count: None,
-                        visibility: ShaderStages::VERTEX,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: false },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
+                        BindGroupLayoutEntry {
+                            binding: 1,
+                            ty: BindingType::Texture {
+                                sample_type: TextureSampleType::Float { filterable: false },
+                                view_dimension: TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                         },
-                        count: None,
-                        visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                    },
-                    BindGroupLayoutEntry {
-                        binding: 2,
-                        ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
-                        count: None,
-                        visibility: ShaderStages::FRAGMENT,
-                    },
-                ],
-            });
+                        BindGroupLayoutEntry {
+                            binding: 2,
+                            ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
+                            count: None,
+                            visibility: ShaderStages::FRAGMENT,
+                        },
+                    ],
+                });
 
-        let bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("lib_renderer bind group"),
-            layout: &bind_group_layout,
+        let quad_bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("lib_renderer quad bind group"),
+            layout: &quad_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: cam_buf.as_entire_binding(),
+                    resource: quad_uniform_buf.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
                     resource: BindingResource::TextureView(
-                        &texture.create_view(&TextureViewDescriptor::default()),
+                        &sprites.create_view(&TextureViewDescriptor::default()),
                     ),
                 },
                 BindGroupEntry {
@@ -209,17 +253,17 @@ impl Renderer {
             ],
         });
 
-        let pipeline = ctx
+        let quad_pipeline = ctx
             .device
             .create_render_pipeline(&RenderPipelineDescriptor {
-                label: Some("lib_renderer pipeline"),
+                label: Some("lib_renderer quad pipeline"),
                 cache: None,
                 depth_stencil: None,
                 layout: Some(
                     &ctx.device
                         .create_pipeline_layout(&PipelineLayoutDescriptor {
-                            label: Some("lib_renderer pipeline layout"),
-                            bind_group_layouts: &[&bind_group_layout],
+                            label: Some("lib_renderer quad pipeline layout"),
+                            bind_group_layouts: &[&quad_bind_group_layout],
                             push_constant_ranges: &[],
                         }),
                 ),
@@ -234,15 +278,124 @@ impl Renderer {
                     unclipped_depth: false,
                 },
                 vertex: VertexState {
-                    module: &shader,
+                    module: &quad_shader,
                     entry_point: None,
                     compilation_options: PipelineCompilationOptions::default(),
-                    buffers: &[VERTEX_BUFFER_LAYOUT, INSTANCE_BUFFER_LAYOUT],
+                    buffers: &[VERTEX_BUFFER_LAYOUT, QUAD_BUFFER_LAYOUT],
                 },
                 fragment: Some(FragmentState {
-                    module: &shader,
+                    module: &quad_shader,
                     targets: &[Some(ColorTargetState {
                         blend: Some(BlendState::ALPHA_BLENDING),
+                        format: TextureFormat::Rgba8Unorm,
+                        write_mask: ColorWrites::all(),
+                    })],
+                    entry_point: None,
+                    compilation_options: PipelineCompilationOptions::default(),
+                }),
+                multisample: MultisampleState::default(),
+            });
+
+        let upscale_shader = ctx
+            .device
+            .create_shader_module(include_wgsl!("upscale_shader.wgsl"));
+
+        let upscale_uniform_buf = ctx.device.create_buffer(&BufferDescriptor {
+            label: Some("lib_renderer upscale uniform buffer"),
+            mapped_at_creation: false,
+            size: size_of::<UpscaleUniform>() as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::UNIFORM,
+        });
+
+        let upscale_bind_group_layout =
+            ctx.device
+                .create_bind_group_layout(&BindGroupLayoutDescriptor {
+                    label: Some("lib_renderer upscale bind group layout"),
+                    entries: &[
+                        BindGroupLayoutEntry {
+                            binding: 0,
+                            ty: BindingType::Buffer {
+                                ty: BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                            visibility: ShaderStages::VERTEX,
+                        },
+                        BindGroupLayoutEntry {
+                            binding: 1,
+                            ty: BindingType::Texture {
+                                sample_type: TextureSampleType::Float { filterable: false },
+                                view_dimension: TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                        },
+                        BindGroupLayoutEntry {
+                            binding: 2,
+                            ty: BindingType::Sampler(SamplerBindingType::NonFiltering),
+                            count: None,
+                            visibility: ShaderStages::FRAGMENT,
+                        },
+                    ],
+                });
+
+        let upscale_bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("lib_renderer upscale bind group"),
+            layout: &upscale_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: upscale_uniform_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(
+                        &render_texture.create_view(&TextureViewDescriptor::default()),
+                    ),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        let upscale_pipeline = ctx
+            .device
+            .create_render_pipeline(&RenderPipelineDescriptor {
+                label: Some("lib_renderer upscale pipeline"),
+                cache: None,
+                depth_stencil: None,
+                layout: Some(
+                    &ctx.device
+                        .create_pipeline_layout(&PipelineLayoutDescriptor {
+                            label: Some("lib_renderer upscale pipeline layout"),
+                            bind_group_layouts: &[&upscale_bind_group_layout],
+                            push_constant_ranges: &[],
+                        }),
+                ),
+                multiview: None,
+                primitive: PrimitiveState {
+                    front_face: FrontFace::Ccw,
+                    conservative: false,
+                    cull_mode: None,
+                    polygon_mode: PolygonMode::Fill,
+                    strip_index_format: None,
+                    topology: PrimitiveTopology::TriangleList,
+                    unclipped_depth: false,
+                },
+                vertex: VertexState {
+                    module: &upscale_shader,
+                    entry_point: None,
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[VERTEX_BUFFER_LAYOUT],
+                },
+                fragment: Some(FragmentState {
+                    module: &upscale_shader,
+                    targets: &[Some(ColorTargetState {
+                        blend: None,
                         format: ctx.surface_format,
                         write_mask: ColorWrites::all(),
                     })],
@@ -255,72 +408,144 @@ impl Renderer {
         Self {
             vertex_buf,
             index_buf,
-            cam_buf,
-            bind_group,
-            pipeline,
+            render_texture_view,
+            quad_uniform_buf,
+            quad_bind_group,
+            quad_pipeline,
+            upscale_uniform_buf,
+            upscale_bind_group,
+            upscale_pipeline,
         }
     }
 
-    pub fn render(
-        &self,
-        quads: QuadBufferSlice<'_>,
+    pub fn start_frame<'a>(
+        &'a mut self,
         cam: &Camera,
-        output: &TextureView,
-        ctx: RendererContext<'_>,
-    ) {
-        let aspect = output.texture().width() as f32 / output.texture().height() as f32;
+        output: &'a TextureView,
+        ctx: RendererContext<'a>,
+    ) -> RendererFrame<'a> {
+        let quad_uniform = QuadUniform {
+            cam_center: (cam.center * PIXELS_PER_UNIT).floor() / PIXELS_PER_UNIT,
+        };
+        let quad_uniform_bytes =
+            unsafe { transmute::<&QuadUniform, &[u8; size_of::<QuadUniform>()]>(&quad_uniform) };
 
-        let cam_uniform = CameraUniform {
-            center: cam.center,
-            extents: vec2!(cam.ortho_size * aspect, cam.ortho_size),
+        ctx.queue
+            .write_buffer(&self.quad_uniform_buf, 0, quad_uniform_bytes);
+
+        let output_aspect = output.texture().width() as f32 / output.texture().height() as f32;
+        let dst_extents = if output_aspect < ASPECT {
+            vec2!(1.0, 1.0 * output_aspect / ASPECT)
+        } else {
+            vec2!(1.0 * ASPECT / output_aspect, 1.0)
         };
 
-        let cam_bytes =
-            unsafe { transmute::<&CameraUniform, &[u8; size_of::<CameraUniform>()]>(&cam_uniform) };
+        let upscale_uniform = UpscaleUniform {
+            src_extents: vec2!(1.0 * cam.ortho_size / MAX_ORTHO_SIZE),
+            src_offset: vec2!(0.0),
+            dst_extents,
+        };
+        let upscale_uniform_bytes = unsafe {
+            transmute::<&UpscaleUniform, &[u8; size_of::<UpscaleUniform>()]>(&upscale_uniform)
+        };
 
-        ctx.queue.write_buffer(&self.cam_buf, 0, cam_bytes);
+        ctx.queue
+            .write_buffer(&self.upscale_uniform_buf, 0, upscale_uniform_bytes);
 
-        let mut encoder = ctx
+        RendererFrame {
+            renderer: self,
+            output,
+            ctx,
+            ops: Operations {
+                load: LoadOp::Clear(Color {
+                    r: cam.clear_color.x as f64,
+                    g: cam.clear_color.y as f64,
+                    b: cam.clear_color.z as f64,
+                    a: cam.clear_color.w as f64,
+                }),
+                store: StoreOp::Store,
+            },
+        }
+    }
+}
+
+impl<'a> RendererFrame<'a> {
+    pub fn render(&mut self, quads: QuadBufferSlice<'_>) {
+        let mut encoder = self
+            .ctx
             .device
             .create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("lib_renderer render pass"),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            depth_stencil_attachment: None,
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: output,
-                depth_slice: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color {
-                        r: cam.clear_color.x as f64,
-                        g: cam.clear_color.y as f64,
-                        b: cam.clear_color.z as f64,
-                        a: cam.clear_color.w as f64,
-                    }),
-                    store: StoreOp::Store,
-                },
-                resolve_target: None,
-            })],
-        });
+        {
+            let mut quad_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("lib_renderer quad render pass"),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                depth_stencil_attachment: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.renderer.render_texture_view,
+                    depth_slice: None,
+                    ops: self.ops,
+                    resolve_target: None,
+                })],
+            });
 
-        pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-        pass.set_vertex_buffer(
-            1,
-            quads.buf.slice(
-                quads.start * size_of::<Quad>() as u64..quads.end * size_of::<Quad>() as u64,
-            ),
-        );
-        pass.set_index_buffer(self.index_buf.slice(..), IndexFormat::Uint16);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_pipeline(&self.pipeline);
+            quad_pass.set_vertex_buffer(0, self.renderer.vertex_buf.slice(..));
+            quad_pass.set_vertex_buffer(
+                1,
+                quads.buf.slice(
+                    quads.start * size_of::<Quad>() as u64..quads.end * size_of::<Quad>() as u64,
+                ),
+            );
+            quad_pass.set_index_buffer(self.renderer.index_buf.slice(..), IndexFormat::Uint16);
+            quad_pass.set_bind_group(0, &self.renderer.quad_bind_group, &[]);
+            quad_pass.set_pipeline(&self.renderer.quad_pipeline);
 
-        pass.draw_indexed(0..6, 0, 0..quads.len() as u32);
+            quad_pass.draw_indexed(0..6, 0, 0..quads.len() as u32);
+        }
 
-        drop(pass);
+        self.ctx.queue.submit([encoder.finish()]);
+    }
+}
 
-        ctx.queue.submit([encoder.finish()]);
+impl<'a> Drop for RendererFrame<'a> {
+    fn drop(&mut self) {
+        let mut encoder = self
+            .ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+
+        {
+            let mut upscale_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("lib_renderer upscale render pass"),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                depth_stencil_attachment: None,
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.output,
+                    depth_slice: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        }),
+                        store: StoreOp::Store,
+                    },
+                    resolve_target: None,
+                })],
+            });
+
+            upscale_pass.set_vertex_buffer(0, self.renderer.vertex_buf.slice(..));
+            upscale_pass.set_index_buffer(self.renderer.index_buf.slice(..), IndexFormat::Uint16);
+            upscale_pass.set_bind_group(0, &self.renderer.upscale_bind_group, &[]);
+            upscale_pass.set_pipeline(&self.renderer.upscale_pipeline);
+
+            upscale_pass.draw_indexed(0..6, 0, 0..1);
+        }
+
+        self.ctx.queue.submit([encoder.finish()]);
     }
 }
 
@@ -340,33 +565,33 @@ const VERTEX_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
     attributes: &[VertexAttribute {
         format: VertexFormat::Float32x2,
         offset: 0,
-        shader_location: 4,
+        shader_location: 0,
     }],
 };
 
-const INSTANCE_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
+const QUAD_BUFFER_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
     array_stride: size_of::<Quad>() as u64,
     step_mode: VertexStepMode::Instance,
     attributes: &[
         VertexAttribute {
             format: VertexFormat::Float32x2,
             offset: offset_of!(Quad, center) as u64,
-            shader_location: 0,
-        },
-        VertexAttribute {
-            format: VertexFormat::Float32x2,
-            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, center)) as u64,
             shader_location: 1,
         },
         VertexAttribute {
             format: VertexFormat::Float32x2,
-            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, extents)) as u64,
+            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, center)) as u64,
             shader_location: 2,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x2,
+            offset: (offset_of!(Quad, sprite) + offset_of!(Sprite, extents)) as u64,
+            shader_location: 3,
         },
         VertexAttribute {
             format: VertexFormat::Float32,
             offset: offset_of!(Quad, layer) as u64,
-            shader_location: 3,
+            shader_location: 4,
         },
     ],
 };
