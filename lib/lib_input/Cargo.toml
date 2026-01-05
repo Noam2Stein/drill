@@ -1,9 +1,0 @@
-[package]
-name = "lib_input"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-lib_input_proc_macros = { path = "proc_macros" }
-lib_window = { path = "../lib_window" }
-lib_math = { path = "../lib_math" }
